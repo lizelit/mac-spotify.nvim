@@ -163,21 +163,37 @@ function M.album_tracks(item, cb)
   end)
 end
 
-function M.playlist_tracks(item, cb)
-  local function map(raws)
-    local items = {}
-    for _, r in ipairs(raws) do
-      local it = track_item(r.track or r.item, item.uri)
-      if it then items[#items + 1] = it end
-    end
-    return items
+function M.play(uri, context)
+  local function fallback(why)
+    util.notify("AppleScript経由で再生(" .. why .. ")", vim.log.levels.WARN)
+    osa.play_uri(uri, context)
   end
-  M.paged("/playlists/" .. item.id .. "/tracks", {}, 100, false, function(raws, err, code)
-    if raws then return cb(map(raws)) end
-    -- エンドポイント名が変わっている場合に備えたフォールバック
-    M.paged("/playlists/" .. item.id .. "/items", {}, 100, false, function(r2, e2, c2)
-      if r2 then cb(map(r2)) else cb(nil, e2 or err, c2 or code) end
-    end)
+  if not auth.is_logged_in() then return fallback("未ログイン") end
+
+  local function done(d, _, code)
+    if d then
+      util.notify("Web API経由で再生")
+      if osa.after then vim.defer_fn(osa.after, 800) end
+    else
+      fallback("API失敗 HTTP " .. tostring(code))
+    end
+  end
+
+  api.play(uri, context, nil, function(d, err, code)
+    if d then return done(d) end
+    if code == 404 then
+      -- アクティブなデバイスがない場合、このMacのSpotifyを探して指定する
+      api.devices(function(devs)
+        local target
+        for _, dev in ipairs(devs or {}) do
+          if dev.type == "Computer" then target = dev; break end
+        end
+        if not (target and target.id) then return fallback("デバイスなし") end
+        api.play(uri, context, target.id, done)
+      end)
+    else
+      fallback("HTTP " .. tostring(code) .. " " .. tostring(err))
+    end
   end)
 end
 
