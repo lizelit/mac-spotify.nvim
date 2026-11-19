@@ -31,7 +31,7 @@ function M.refresh()
     end
     if s ~= vim.g.spotify_now then
       vim.g.spotify_now = s
-      pcall(function() require("lualine").refresh() end)
+      vim.cmd.redrawstatus()
     end
   end)
 end
