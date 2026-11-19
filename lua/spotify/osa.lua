@@ -43,6 +43,34 @@ function M.volume_set(n)
   act(("set sound volume to %d"):format(math.max(0, math.min(100, math.floor(n)))))()
 end
 
+-- ───────── 再生(未起動ならバックグラウンドで起動) ─────────
+local function is_running(cb)
+  run('application "Spotify" is running', function(out) cb(out == "true") end)
+end
+
+-- 未起動なら `open -g`(バックグラウンド起動)で起動し、AppleScriptが通るまで待つ
+local function ensure_running(cb)
+  is_running(function(running)
+    if running then return cb(true) end
+    vim.system({ "open", "-g", "-a", "Spotify" })
+    local tries = 0
+    local function poll()
+      tries = tries + 1
+      is_running(function(ok)
+        if ok then
+          -- 起動直後はAppleScriptが通らないことがあるので少し待つ
+          vim.defer_fn(function() cb(true) end, 1500)
+        elseif tries < 20 then
+          vim.defer_fn(poll, 500)
+        else
+          cb(false)
+        end
+      end)
+    end
+    poll()
+  end)
+end
+
 -- track / album / playlist のURIを再生。context を渡すとその中の1曲を再生する
 function M.play_uri(uri, context)
   if not uri or not uri:match("^spotify:[%w:]+$") then return end
@@ -50,8 +78,13 @@ function M.play_uri(uri, context)
   if context and context:match("^spotify:[%w:]+$") then
     cmd = cmd .. ' in context "' .. context .. '"'
   end
-  run('tell application "Spotify" to ' .. cmd, function()
-    if M.after then vim.defer_fn(M.after, 600) end
+  ensure_running(function(ok)
+    if not ok then
+      return vim.notify("Spotifyを起動できませんでした", vim.log.levels.WARN, { title = "Spotify" })
+    end
+    run('tell application "Spotify" to ' .. cmd, function()
+      if M.after then vim.defer_fn(M.after, 600) end
+    end)
   end)
 end
 
